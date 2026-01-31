@@ -1,0 +1,39 @@
+services:
+  # Django应用
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    # 环境变量加载顺序：后加载的覆盖先加载的
+    env_file:
+      - .env          # 先加载通用配置
+      - .env.docker   # 再加载Docker专用配置，覆盖其中的 HOST 设置
+    depends_on:
+      - db
+      - redis
+
+  # PostgreSQL数据库
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
+  static_volume:
+  media_volume:
