@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的番茄钟 | 专注工作法</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .container { background: white; border-radius: 20px; padding: 30px; width: 100%; max-width: 500px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        h1 { color: #333; text-align: center; margin-bottom: 10px; }
+        .subtitle { color: #666; text-align: center; margin-bottom: 30px; font-size: 0.9rem; }
+        .timer-display { font-size: 5rem; font-weight: bold; text-align: center; color: #4a5568; margin: 20px 0; }
+        .status { text-align: center; padding: 8px; border-radius: 50px; margin: 15px auto; width: fit-content; font-size: 0.9rem; }
+        .status.planned { background: #e2e8f0; color: #4a5568; }
+        .status.working { background: #c6f6d5; color: #22543d; }
+        .status.paused { background: #fed7d7; color: #742a2a; }
+        .controls { display: flex; justify-content: center; gap: 10px; margin: 25px 0; flex-wrap: wrap; }
+        button { padding: 12px 24px; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; transition: all 0.2s; }
+        .btn-start { background: #38a169; color: white; }
+        .btn-pause { background: #dd6b20; color: white; }
+        .btn-leave { background: #e53e3e; color: white; }
+        .btn-resume, .btn-complete { background: #3182ce; color: white; }
+        .btn-reset { background: #a0aec0; color: white; }
+        button:hover { opacity: 0.9; transform: translateY(-2px); }
+        button:disabled { background: #cbd5e0; cursor: not-allowed; transform: none; }
+        .stats { background: #f7fafc; border-radius: 10px; padding: 20px; margin-top: 25px; }
+        .stats h3 { color: #4a5568; margin-bottom: 10px; }
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .debug-info { background: #edf2f7; padding: 15px; border-radius: 10px; margin-top: 20px; font-size: 0.8rem; color: #718096; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🍅 我的番茄钟</h1>
+        <p class="subtitle">专注工作法 · 记录有效时长</p>
+
+        <div class="timer-display" id="timerDisplay">25:00</div>
+
+        <div class="status planned" id="statusIndicator">状态：计划中</div>
+
+        <div class="controls">
+            <button class="btn-start" onclick="startTomato()" id="btnStart">开始专注</button>
+            <button class="btn-pause" onclick="pauseTomato()" id="btnPause" disabled>暂停</button>
+            <button class="btn-leave" onclick="startLeave()" id="btnLeave" disabled>我要暂离</button>
+            <button class="btn-resume" onclick="endLeave()" id="btnResume" disabled>结束暂离</button>
+            <button class="btn-complete" onclick="completeTomato()" id="btnComplete" disabled>完成番茄</button>
+            <button class="btn-reset" onclick="resetTomato()" id="btnReset">重置</button>
+        </div>
+
+        <div class="stats">
+            <h3>📊 本次会话统计</h3>
+            <div class="stat-row"><span>计划时长：</span><span id="statPlanned">25</span> 分钟</div>
+            <div class="stat-row"><span>有效工作时长：</span><span id="statEffective">0</span> 分钟</div>
+            <div class="stat-row"><span>暂离时长：</span><span id="statLeave">0</span> 分钟</div>
+            <div class="stat-row"><span>会话状态：</span><span id="statStatus">计划中</span></div>
+        </div>
+
+        <!-- 开发阶段用于调试和API测试 -->
+        <div class="debug-info">
+            <strong>开发模式</strong><br>
+            当前会话ID: <span id="sessionId">无</span><br>
+            <button onclick="testCreateSession()">测试创建会话</button>
+            <button onclick="testUpdateSession()">测试更新会话</button>
+            <button onclick="loadAllSessions()">查看所有记录</button>
+            <pre id="apiResponse"></pre>
+        </div>
+    </div>
+
+    <script>
+        // 1. 核心状态与配置（解耦：状态管理独立）
+        let appState = {
+            sessionId: null,
+            status: 'planned', // planned, working, paused, completed
+            plannedMinutes: 25,
+            timerInterval: null,
+            remainingSeconds: 25 * 60,
+            leaveStartTime: null
+        };
+
+        // 2. 工具函数（解耦：纯函数，无副作用）
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function updateDisplay() {
+            document.getElementById('timerDisplay').textContent = formatTime(appState.remainingSeconds);
+            document.getElementById('statEffective').textContent = (appState.plannedMinutes * 60 - appState.remainingSeconds) / 60;
+            document.getElementById('statStatus').textContent = getStatusText(appState.status);
+        }
+
+        function getStatusText(status) {
+            const map = { 'planned': '计划中', 'working': '专注中', 'paused': '暂离中', 'completed': '已完成' };
+            return map[status] || status;
+        }
+
+        // 3. 核心控制逻辑（解耦：每个功能点独立）
+        function startTomato() {
+            if (appState.status !== 'planned') return;
+            appState.status = 'working';
+            appState.remainingSeconds = appState.plannedMinutes * 60;
+            startTimer();
+            updateUI();
+            // 这里将来会调用API：创建新的TomatoSession
+            console.log('开始番茄钟，创建会话');
+        }
+
+        function pauseTomato() {
+            if (appState.status !== 'working') return;
+            appState.status = 'planned';
+            stopTimer();
+            updateUI();
+            console.log('暂停番茄钟');
+        }
+
+        function startLeave() {
+            if (appState.status !== 'working') return;
+            appState.status = 'paused';
+            appState.leaveStartTime = new Date();
+            stopTimer();
+            updateUI();
+            console.log('开始暂离', appState.leaveStartTime);
+        }
+
+        function endLeave() {
+            if (appState.status !== 'paused') return;
+            appState.status = 'working';
+            const leaveDuration = Math.floor((new Date() - appState.leaveStartTime) / 1000);
+            // 这里将来会调用API：更新会话的leave_start_at和leave_end_at
+            console.log('结束暂离，离开时长:', leaveDuration, '秒');
+            appState.leaveStartTime = null;
+            startTimer();
+            updateUI();
+        }
+
+        function completeTomato() {
+            appState.status = 'completed';
+            stopTimer();
+            updateUI();
+            // 这里将来会调用API：标记会话为完成
+            console.log('完成番茄钟');
+        }
+
+        function resetTomato() {
+            appState.status = 'planned';
+            appState.remainingSeconds = appState.plannedMinutes * 60;
+            appState.leaveStartTime = null;
+            stopTimer();
+            updateUI();
+            console.log('重置番茄钟');
+        }
+
+        // 4. 定时器控制（解耦：独立模块）
+        function startTimer() {
+            stopTimer(); // 确保只有一个定时器
+            appState.timerInterval = setInterval(() => {
+                if (appState.remainingSeconds > 0) {
+                    appState.remainingSeconds--;
+                    updateDisplay();
+                } else {
+                    completeTomato();
+                }
+            }, 1000);
+        }
+
+        function stopTimer() {
+            if (appState.timerInterval) {
+                clearInterval(appState.timerInterval);
+                appState.timerInterval = null;
+            }
+        }
+
+        // 5. UI状态同步（解耦：视图更新独立）
+        function updateUI() {
+            const statusText = getStatusText(appState.status);
+            document.getElementById('statusIndicator').textContent = `状态：${statusText}`;
+            document.getElementById('statusIndicator').className = `status ${appState.status}`;
+
+            // 按钮状态机
+            document.getElementById('btnStart').disabled = appState.status !== 'planned';
+            document.getElementById('btnPause').disabled = appState.status !== 'working';
+            document.getElementById('btnLeave').disabled = appState.status !== 'working';
+            document.getElementById('btnResume').disabled = appState.status !== 'paused';
+            document.getElementById('btnComplete').disabled = appState.status === 'completed';
+            document.getElementById('btnReset').disabled = false;
+
+            updateDisplay();
+        }
+
+        // 6. API交互模拟（解耦：为后端集成预留接口）
+        function testCreateSession() {
+            fetch('/api/tomato/create/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+                body: JSON.stringify({ planned_duration: appState.plannedMinutes })
+            })
+            .then(response => response.json())
+            .then(data => {
+                appState.sessionId = data.id;
+                document.getElementById('sessionId').textContent = data.id;
+                document.getElementById('apiResponse').textContent = JSON.stringify(data, null, 2);
+            });
+        }
+
+        function getCsrfToken() {
+            return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';
+        }
+
+        // 初始化
+        updateUI();
+    </script>
+</body>
+</html>
